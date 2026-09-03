@@ -1,14 +1,21 @@
 #include <windows.h>
 #include <stdio.h>
 #include "Utils.h"
+#include "ApiHashing.h"
 
 int main() {
-    char string[] = "Hello World!";
-    DWORD runtimeHash = runtime_fnv1a(string);
-    DWORD constexprHash = HASH("This is test");
+    API_TABLE Api;
+    if(!initApiTable(&Api)) {
+        printf("[-] Init Api Hashing failed\n");
+        return 1;
+    } else {
+        printf("[+] Init Api Hashing successful\n");
+    }
 
-    printf("String: %s, Hash: %lu\n", string, runtimeHash);
-    printf("Constexpr hash: %lu\n", constexprHash);
+    Api.pMessageBoxA(NULL, 
+        "Hello, World!", 
+        "test", 
+        MB_OK | MB_ICONINFORMATION);
 
     return 0;
 }
