@@ -16,3 +16,9 @@ target_compile_options(app PRIVATE
     
     $<$<CXX_COMPILER_ID:Clang>:-Oz>
 )
+
+target_link_options(app PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/OPT:REF /OPT:ICF>
+    
+    $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>>:-Wl,--gc-sections -s>
+)
