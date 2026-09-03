@@ -1,169 +1,69 @@
 # ApiHashing
 
-A small Windows C++ Proof of Concept demonstrating **API hashing** and runtime API resolution without relying on the normal `GetModuleHandle` / `GetProcAddress` workflow.
+A small Windows C++ Proof of Concept demonstrating **API hashing** and runtime API resolution using PEB module enumeration and PE Export Address Table parsing.
 
-The project manually walks the Process Environment Block (**PEB**) to locate loaded modules and parses the **Export Address Table (EAT)** to resolve exported functions by their hash.
+The project resolves Windows APIs by their hashes instead of resolving them through the standard `GetProcAddress` workflow.
 
-> **Note:** This project is intended for educational and security research purposes. It demonstrates low-level Windows internals and PE parsing concepts.
+> **Note:** This project is intended for educational and security research purposes.
 
 ## Overview
 
-Normally, a Windows application can resolve an exported function using APIs such as:
-
-```cpp
-GetModuleHandleA("kernel32.dll");
-GetProcAddress(module, "LoadLibraryA");
-```
-
-This PoC demonstrates an alternative approach:
+The PoC demonstrates the following API resolution flow:
 
 ```text
-PEB
- │
- └── PEB_LDR_DATA
-      │
-      └── InLoadOrderModuleList
-           │
-           ├── kernel32.dll
-           ├── user32.dll
-           └── ...
-                │
-                ▼
-        Hash module name
-                │
-                ▼
-          Find module base
-                │
-                ▼
-          Parse PE headers
-                │
-                ▼
-       Export Address Table
-                │
-                ▼
-        Hash exported names
-                │
-                ▼
-       Resolve function address
-                │
-                ▼
-          Function pointer
+                         PEB
+                          │
+                          ▼
+                  PEB_LDR_DATA
+                          │
+                          ▼
+                 Module List (LDR)
+                          │
+                          ▼
+                Hash module name
+                          │
+                          ▼
+                   Module base
+                          │
+                          ▼
+                    PE Headers
+                          │
+                          ▼
+                 Export Directory
+                          │
+                          ▼
+                 Hash API names
+                          │
+                          ▼
+                 Function address
+                          │
+                          ▼
+                  Function pointer
 ```
 
-The example ultimately resolves and calls `MessageBoxA` without directly resolving it through the standard Windows API.
+The example resolves `LoadLibraryA` from `kernel32.dll`, uses it to load `user32.dll`, and then resolves `MessageBoxA` from the loaded module.
 
 ## Features
 
-* PEB-based module enumeration
-* 32-bit FNV-1a hashing
-* Compile-time hashing for string literals
-* Runtime hashing for module and export names
-* Manual PE header parsing
-* Manual Export Address Table (EAT) traversal
-* Runtime API table initialization
-* x86-64 Windows support
-* CMake-based build system
-* LLVM/MinGW cross-compilation support
+- PEB-based module enumeration
+- Runtime module resolution by hash
+- PE header parsing
+- Export Address Table (EAT) parsing
+- API resolution by hash
+- FNV-1a 32-bit hashing
+- Compile-time hashing
+- Runtime hashing
+- Function pointer based API calls
+- CMake build system
+- LLVM/MinGW toolchain support
 
-## Project Structure
+## How It Works
 
-```text
-ApiHashing/
-├── src/
-│   ├── ApiHashing.cpp
-│   ├── ApiHashing.h
-│   ├── Utils.h
-│   └── main.cpp
-│
-├── CMakeLists.txt
-├── llvm-mingw-toolchain.cmake
-├── .gitignore
-└── README.md
-```
+### Module Resolution
 
-### `src/ApiHashing.cpp`
+`GetModuleByHash()` obtains the Process Environment Block (PEB) and walks the loader's `InLoadOrderModuleList`.
 
-Contains the main API hashing implementation:
-
-* `GetModuleByHash()` — searches loaded modules through the PEB loader structures.
-* `GetProcAddressByHash()` — parses a module's PE export directory and searches for an exported function by hash.
-* `initApiTable()` — resolves the APIs required by the demonstration.
-
-### `src/ApiHashing.h`
-
-Contains the Windows-specific structures and function pointer definitions used by the implementation.
-
-The project defines a small custom representation of loader structures so that it can access the required PEB/LDR fields directly.
-
-### `src/Utils.h`
-
-Contains the FNV-1a hashing implementation.
-
-Both narrow and wide strings are supported:
-
-```cpp
-HASH("MessageBoxA")
-HASHW(L"kernel32.dll")
-```
-
-The project provides both compile-time and runtime hashing functions.
-
-### `src/main.cpp`
-
-Contains the demonstration program.
-
-It initializes the API table and calls the resolved `MessageBoxA` function:
-
-```text
-Initialize API table
-        │
-        ├── Resolve kernel32.dll
-        ├── Resolve LoadLibraryA
-        ├── Load user32.dll
-        └── Resolve MessageBoxA
-                │
-                ▼
-          Call MessageBoxA
-```
-
-## How API Hashing Works
-
-Instead of storing an API name directly at the point where it is resolved, the resolver compares hashes.
-
-For example:
-
-```cpp
-HASH("MessageBoxA")
-```
-
-produces the hash at compile time.
-
-At runtime, the resolver walks the module's export names and calculates the same hash:
-
-```text
-"MessageBoxA"
-      │
-      ▼
-   FNV-1a
-      │
-      ▼
-   32-bit hash
-```
-
-When the hashes match, the corresponding entry in the Export Address Table is used to obtain the function address.
-
-This allows the PoC to resolve an exported function without passing its name to the standard `GetProcAddress` API.
-
-## Module Resolution
-
-`GetModuleByHash()` obtains the PEB using the architecture-specific segment register:
-
-* x64: `GS:[0x60]`
-* x86: `FS:[0x30]`
-
-It then walks the loader's `InLoadOrderModuleList` and hashes each module's base name.
-
-Conceptually:
+Each module's base name is hashed and compared with the requested hash.
 
 ```text
 PEB
@@ -172,70 +72,184 @@ PEB
       │
       └── InLoadOrderModuleList
            │
-           ├── module #1
-           ├── module #2
-           ├── kernel32.dll  ──► hash match
+           ├── module
+           ├── module
+           ├── kernel32.dll ──► hash match
            └── ...
 ```
 
-Once the requested hash is found, the module's base address is returned.
+Once a matching module is found, its base address is returned.
 
-## Export Resolution
+### Export Resolution
 
-After obtaining a module base address, `GetProcAddressByHash()` performs basic PE parsing:
+`GetProcAddressByHash()` manually parses the PE headers of the target module and locates its Export Directory.
+
+The resolver uses:
+
+- `AddressOfNames`
+- `AddressOfFunctions`
+- `AddressOfNameOrdinals`
+
+to enumerate exported functions.
+
+Each exported function name is hashed and compared against the requested API hash.
 
 ```text
-DOS Header
-    │
-    └── e_lfanew
+PE Image
+   │
+   ├── DOS Header
+   │
+   ├── NT Headers
+   │
+   └── Export Directory
           │
-          ▼
-      NT Headers
-          │
-          └── Optional Header
-                │
-                └── Export Directory
-                      │
-                      ├── AddressOfNames
-                      ├── AddressOfFunctions
-                      └── AddressOfNameOrdinals
+          ├── Export Names
+          ├── Name Ordinals
+          └── Function RVAs
+                    │
+                    ▼
+             Function Address
 ```
 
-The resolver iterates through the exported function names, hashes each name and compares it with the requested hash.
+## API Resolution Flow
 
-If a match is found, the corresponding function RVA is converted into an address relative to the module base.
+The demonstration follows this sequence:
 
-## Hash Function
+```text
+kernel32.dll
+     │
+     │ hash
+     ▼
+GetModuleByHash()
+     │
+     ▼
+kernel32.dll base
+     │
+     │ hash
+     ▼
+GetProcAddressByHash()
+     │
+     ▼
+LoadLibraryA
+     │
+     │
+     ▼
+Load user32.dll
+     │
+     ▼
+user32.dll base
+     │
+     │ hash
+     ▼
+GetProcAddressByHash()
+     │
+     ▼
+MessageBoxA
+     │
+     ▼
+MessageBoxA(...)
+```
 
-The PoC uses **FNV-1a** with the standard 32-bit FNV parameters:
+The resulting function addresses are stored in an `API_TABLE` and called through function pointers.
+
+## Hashing
+
+The project uses the **FNV-1a 32-bit** hash algorithm.
 
 ```text
 FNV offset basis = 0x811c9dc5
 FNV prime        = 0x01000193
 ```
 
-The hash is used as an identifier rather than as a cryptographic primitive.
+The project provides both compile-time and runtime hashing helpers.
 
-FNV-1a should **not** be considered a cryptographic hash function. Hash collisions are theoretically possible, so a production implementation would need to consider collision handling and the required security properties.
+Example:
+
+```cpp
+HASH("MessageBoxA")
+HASHW(L"kernel32.dll")
+```
+
+The compile-time version allows API and module hashes to be generated during compilation, while exported names are hashed at runtime during the resolution process.
+
+FNV-1a is used here as a lightweight identifier mechanism. It is **not a cryptographic hash function**, and hash collisions are possible.
+
+## Static Analysis
+
+One of the main points demonstrated by this PoC is that APIs can be resolved without being present as direct imports.
+
+For example, `LoadLibraryA` and `MessageBoxA` are resolved dynamically through the custom resolver rather than through the normal `GetProcAddress` workflow.
+
+The executable can be inspected with tools such as **Detect It Easy (DIE)** to examine its import table.
+
+![Import table analyzed with Detect It Easy](docs/die.png)
+
+The screenshot above shows that `LoadLibraryA` and `MessageBoxA` are not present in the executable's regular import table, even though both APIs are used during execution.
+
+> Note: The executable still has other normal Windows imports, including `GetModuleHandleA` and `GetProcAddress`. API hashing does not mean that the executable has no imports at all.
+
+## Project Structure
+
+```text
+ApiHashing/
+│
+├── src/
+│   ├── ApiHashing.cpp
+│   ├── ApiHashing.h
+│   ├── Utils.h
+│   └── main.cpp
+│
+├── docs/
+│   └── die.png
+│
+├── CMakeLists.txt
+├── llvm-mingw-toolchain.cmake
+├── .gitignore
+└── README.md
+```
+
+### `ApiHashing.cpp`
+
+Contains the main API hashing implementation:
+
+- PEB module enumeration
+- module lookup by hash
+- PE export parsing
+- API lookup by hash
+- API table initialization
+
+### `ApiHashing.h`
+
+Contains the custom loader structures, API function pointer definitions, and API table declaration.
+
+### `Utils.h`
+
+Contains the FNV-1a hashing implementation.
+
+Both narrow and wide strings are supported.
+
+### `main.cpp`
+
+Contains the PoC entry point.
+
+The program initializes the API table and calls the resolved `MessageBoxA` function.
 
 ## Building
 
 ### Requirements
 
-* Windows or a Windows cross-compilation environment
-* C++17-compatible compiler
-* CMake 3.15 or newer
+- Windows
+- C++17-compatible compiler
+- CMake 3.15+
 
-The project is configured as a C++17 CMake project.
-
-### Build with CMake
+### CMake
 
 ```bash
 cmake -S . -B build
 cmake --build build --config Release
 ```
 
-The resulting executable is named:
+The project currently produces an executable named:
 
 ```text
 app
@@ -243,13 +257,11 @@ app
 
 ### LLVM/MinGW
 
-The repository also contains an LLVM/MinGW CMake toolchain file targeting:
+The repository includes an LLVM/MinGW toolchain configuration targeting:
 
 ```text
 x86_64-w64-mingw32
 ```
-
-The provided configuration uses Clang/LLVM-MinGW for C and C++ compilation.
 
 Example:
 
@@ -260,19 +272,19 @@ cmake -S . -B build \
 cmake --build build --config Release
 ```
 
-The exact path to the LLVM-MinGW installation may need to be adjusted in `llvm-mingw-toolchain.cmake`.
+The toolchain path may need to be adjusted for your local LLVM/MinGW installation.
 
 ## Example
 
-When the program starts successfully, it prints:
+When API initialization succeeds:
 
 ```text
 [+] Init Api Hashing successful
 ```
 
-The resolved `MessageBoxA` function is then called, producing the demonstration message box.
+The program then calls the dynamically resolved `MessageBoxA`.
 
-If API resolution fails:
+If initialization fails:
 
 ```text
 [-] Init Api Hashing failed
@@ -280,43 +292,27 @@ If API resolution fails:
 
 ## Limitations
 
-This is intentionally a **small Proof of Concept**, not a production-ready API resolver.
+This project is intentionally a small **Proof of Concept**, not a production-ready API resolver.
 
-Some important limitations include:
+Current limitations include:
 
-* No explicit handling of forwarded exports.
-* No comprehensive validation of PE structures and RVA boundaries.
-* Hash collisions are not handled.
-* The implementation relies on Windows internal structures.
-* Loader structure layouts and undocumented internals should not be treated as a stable public API.
-* The current example resolves only the APIs required by the demonstration.
-* The implementation is primarily intended for x86-64 Windows environments.
-* FNV-1a provides no cryptographic security.
+- No forwarded export handling
+- No comprehensive PE structure validation
+- No hash collision handling
+- No complete architecture abstraction
+- Relies on Windows loader internals
+- Uses internal PEB/LDR structures
+- Only resolves the APIs required by the demonstration
 
-These limitations are intentional so that the implementation remains focused on demonstrating the underlying concept.
-
-## Why API Hashing?
-
-API hashing is a technique commonly discussed in:
-
-* malware analysis
-* reverse engineering
-* Windows internals research
-* PE format research
-* defensive security research
-* malware detection and threat hunting
-
-It can make static identification of API names more difficult, but **API hashing is not encryption and does not provide strong secrecy**.
-
-A resolver can still be identified through behavioral analysis, dynamic analysis, memory inspection, control-flow analysis, or by reproducing the hashing algorithm.
+These limitations are intentional and keep the project focused on demonstrating the underlying API hashing technique.
 
 ## Learning Goals
 
-This project was created as a practical exercise for understanding:
+This project was created as a practical exercise in:
 
 1. Windows PEB internals
 2. Windows loader structures
-3. PE file structure
+3. PE file format
 4. Export Address Tables
 5. RVA-to-address calculations
 6. Function pointers
@@ -324,14 +320,29 @@ This project was created as a practical exercise for understanding:
 8. FNV-1a hashing
 9. Runtime API resolution
 
+## Why API Hashing?
+
+API hashing is a technique commonly encountered in:
+
+- Windows internals research
+- reverse engineering
+- malware analysis
+- PE format research
+- defensive security research
+- malware detection and threat hunting
+
+API hashing can make static identification of specific API names more difficult, but it is **not encryption** and does not provide strong secrecy.
+
+The underlying behavior can still be identified through dynamic analysis, memory inspection, control-flow analysis, or by reproducing the hashing algorithm.
+
 ## References
 
-* [Microsoft PE/COFF specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
-* [Microsoft Win32 documentation](https://learn.microsoft.com/en-us/windows/win32/)
-* [FNV hash function](http://www.isthe.com/chongo/tech/comp/fnv/)
+- [Microsoft PE/COFF Specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
+- [Microsoft Win32 Documentation](https://learn.microsoft.com/en-us/windows/win32/)
+- [FNV Hash Function](http://www.isthe.com/chongo/tech/comp/fnv/)
 
 ## Disclaimer
 
 This repository is provided for **educational and security research purposes**.
 
-The code demonstrates Windows internals and API resolution techniques in a controlled Proof-of-Concept environment. The author does not encourage the use of these techniques for unauthorized access, evasion, or deployment of malicious software.
+The code demonstrates Windows internals, PE parsing, and runtime API resolution in a controlled Proof-of-Concept environment.
