@@ -15,7 +15,7 @@ constexpr DWORD GetCompileTimeSalt() {
 #define HASHW(str) ([]() { constexpr DWORD hash = constexpr_fnv1a_w(str); return hash; }())
 
 constexpr DWORD constexpr_fnv1a(const char *str) {
-    DWORD64 hash = FNV_OFFSET;
+    DWORD hash = FNV_OFFSET;
 
     if (str == 0) {
         return hash;
@@ -30,7 +30,7 @@ constexpr DWORD constexpr_fnv1a(const char *str) {
     return hash;
 }
 constexpr DWORD constexpr_fnv1a_w(const wchar_t *str) {
-    DWORD64 hash = FNV_OFFSET;
+    DWORD hash = FNV_OFFSET;
 
     if (str == 0) {
         return hash;
@@ -51,7 +51,7 @@ constexpr DWORD constexpr_fnv1a_w(const wchar_t *str) {
     return hash;
 }
 inline DWORD runtime_fnv1a(const char *str) {
-    DWORD64 hash = FNV_OFFSET;
+    DWORD hash = FNV_OFFSET;
 
     if (str == 0) {
         return hash;
@@ -66,7 +66,7 @@ inline DWORD runtime_fnv1a(const char *str) {
     return hash;
 }
 inline DWORD runtime_fnv1a_w(const wchar_t *str) {
-    DWORD64 hash = FNV_OFFSET;
+    DWORD hash = FNV_OFFSET;
 
     if (str == 0) {
         return hash;
